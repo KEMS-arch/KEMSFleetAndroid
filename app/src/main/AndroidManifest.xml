@@ -8,6 +8,8 @@
     <application
         android:allowBackup="false"
         android:label="KEMS FLEET"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true">
