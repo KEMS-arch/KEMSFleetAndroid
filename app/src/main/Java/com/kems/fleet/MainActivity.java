@@ -4,10 +4,15 @@ package com.kems.fleet;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.database.Cursor;
 import android.graphics.Color;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.text.format.Formatter;
 import android.view.Gravity;
@@ -18,11 +23,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
@@ -32,7 +39,11 @@ public class MainActivity extends Activity {
     private final String PANEL = "#14251F";
     private final String WHITE = "#F2FFF8";
 
+    private static final int REQUEST_IMPORT_JSON = 501;
+    private static final int MAX_JSON_SIZE = 20 * 1024 * 1024;
+
     private SharedPreferences prefs;
+
     private String serverUrl = "";
     private String token = "";
     private String username = "";
@@ -41,7 +52,12 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private LinearLayout content;
     private TextView message;
+
     private JSONArray vehicles = new JSONArray();
+
+    private Uri selectedJsonUri = null;
+    private String selectedJsonName = "Aucun fichier sélectionné";
+    private TextView jsonFileLabel;
 
     private final ExecutorService executor =
             Executors.newFixedThreadPool(12);
@@ -65,11 +81,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // INTERFACE
-    // --------------------------------------------------
+    // ==================================================
 
     private void createScreen(String title) {
+
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor(BG));
@@ -86,11 +103,13 @@ public class MainActivity extends Activity {
         root.addView(heading);
 
         ScrollView scroll = new ScrollView(this);
+
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(3, 5, 3, 15);
 
         scroll.addView(content);
+
         root.addView(scroll, new LinearLayout.LayoutParams(
                 -1, 0, 1
         ));
@@ -107,16 +126,20 @@ public class MainActivity extends Activity {
     }
 
     private TextView text(String value, int size) {
+
         TextView t = new TextView(this);
         t.setText(value);
         t.setTextColor(Color.parseColor(WHITE));
         t.setTextSize(size);
         t.setPadding(8, 10, 8, 10);
+
         return t;
     }
 
     private EditText field(String hint) {
+
         EditText e = new EditText(this);
+
         e.setHint(hint);
         e.setHintTextColor(Color.GRAY);
         e.setTextColor(Color.WHITE);
@@ -126,6 +149,7 @@ public class MainActivity extends Activity {
 
         LinearLayout.LayoutParams p =
                 new LinearLayout.LayoutParams(-1, -2);
+
         p.setMargins(0, 6, 0, 6);
         e.setLayoutParams(p);
 
@@ -133,49 +157,118 @@ public class MainActivity extends Activity {
     }
 
     private Button button(String label, Runnable action) {
+
         Button b = new Button(this);
+
         b.setText(label);
         b.setTextColor(Color.parseColor(BG));
+
         b.setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(
-                        Color.parseColor(GREEN)
-                )
+                ColorStateList.valueOf(Color.parseColor(GREEN))
         );
 
         LinearLayout.LayoutParams p =
                 new LinearLayout.LayoutParams(-1, -2);
+
         p.setMargins(0, 5, 0, 5);
         b.setLayoutParams(p);
 
         b.setOnClickListener(v -> action.run());
+
         return b;
     }
 
     private void showMessage(String value) {
+
         runOnUiThread(() -> {
-            if (message != null) message.setText(value);
+
+            if (message != null) {
+                message.setText(value);
+            }
+
         });
     }
 
+    private void notifyUser(String value) {
+
+        runOnUiThread(() ->
+                Toast.makeText(
+                        MainActivity.this,
+                        value,
+                        Toast.LENGTH_LONG
+                ).show()
+        );
+    }
+
     private void addSpace() {
+
         TextView space = new TextView(this);
         space.setHeight(12);
+
         content.addView(space);
     }
 
-    // --------------------------------------------------
+    // ==================================================
+    // ADRESSE SERVEUR
+    // ==================================================
+
+    private String normalizeServerUrl(String address) {
+
+        address = address.trim();
+
+        if (address.isEmpty()) {
+            return "";
+        }
+
+        if (!address.startsWith("http://") &&
+                !address.startsWith("https://")) {
+
+            address = "http://" + address;
+        }
+
+        address = address.replaceAll("/+$", "");
+
+        try {
+
+            URL url = new URL(address);
+
+            if (url.getPort() == -1) {
+
+                String host = url.getHost();
+
+                String protocol = url.getProtocol();
+
+                address = protocol + "://" + host + ":3001";
+            }
+
+        } catch (Exception e) {
+
+            throw new IllegalArgumentException(
+                    "Adresse serveur invalide."
+            );
+        }
+
+        return address;
+    }
+
+    // ==================================================
     // CONNEXION
-    // --------------------------------------------------
+    // ==================================================
 
     private void showLogin() {
+
         createScreen("CONNEXION");
 
-        EditText server = field("Adresse serveur, ex : http://192.168.1.10:3001");
+        EditText server = field(
+                "Adresse serveur : 192.168.1.10:3001"
+        );
+
         server.setText(serverUrl);
 
         EditText user = field("Nom d'utilisateur");
 
         EditText password = field("Mot de passe");
+
         password.setInputType(
                 InputType.TYPE_CLASS_TEXT |
                 InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -184,43 +277,78 @@ public class MainActivity extends Activity {
         content.addView(text("Adresse du serveur", 14));
         content.addView(server);
 
-        content.addView(button("DÉTECTER LE SERVEUR WI-FI", () -> {
-            serverUrl = server.getText().toString().trim();
-            detectServer(server);
-        }));
+        content.addView(button(
+                "DÉTECTER LE SERVEUR WI-FI",
+                () -> detectServer(server)
+        ));
 
-        content.addView(button("TESTER LA CONNEXION", () -> {
-            serverUrl = server.getText().toString().trim();
-            testConnection();
-        }));
+        content.addView(button(
+                "TESTER LA CONNEXION",
+                () -> {
+
+                    try {
+
+                        serverUrl = normalizeServerUrl(
+                                server.getText().toString()
+                        );
+
+                        testConnection();
+
+                    } catch (Exception e) {
+
+                        showMessage(e.getMessage());
+                    }
+                }
+        ));
 
         content.addView(text("Identifiants", 14));
         content.addView(user);
         content.addView(password);
 
         content.addView(button("SE CONNECTER", () -> {
-            serverUrl = server.getText().toString().trim();
 
-            String u = user.getText().toString().trim();
-            String p = password.getText().toString();
+            try {
 
-            if (serverUrl.isEmpty() || u.isEmpty() || p.isEmpty()) {
-                showMessage("Veuillez remplir tous les champs.");
-                return;
+                serverUrl = normalizeServerUrl(
+                        server.getText().toString()
+                );
+
+                String u = user.getText().toString().trim();
+                String p = password.getText().toString();
+
+                if (serverUrl.isEmpty() ||
+                        u.isEmpty() ||
+                        p.isEmpty()) {
+
+                    showMessage("Veuillez remplir tous les champs.");
+                    return;
+                }
+
+                login(u, p);
+
+            } catch (Exception e) {
+
+                showMessage(e.getMessage());
             }
 
-            login(u, p);
         }));
 
-        content.addView(button("PARAMÈTRES SERVEUR", this::showSettings));
+        content.addView(button(
+                "PARAMÈTRES SERVEUR",
+                this::showSettings
+        ));
     }
 
     private void login(String user, String password) {
+
         showMessage("Connexion en cours...");
 
         executor.execute(() -> {
+
             try {
+
                 JSONObject data = new JSONObject();
+
                 data.put("username", user);
                 data.put("password", password);
 
@@ -232,16 +360,24 @@ public class MainActivity extends Activity {
                 );
 
                 if (!result.optBoolean("success", false)) {
+
                     throw new Exception(
-                            result.optString("message", "Identifiants incorrects.")
+                            result.optString(
+                                    "message",
+                                    "Identifiants incorrects."
+                            )
                     );
                 }
 
                 String newToken = result.optString("token", "");
+
                 JSONObject account = result.optJSONObject("user");
 
                 if (newToken.isEmpty()) {
-                    throw new Exception("Le serveur n'a pas retourné de token.");
+
+                    throw new Exception(
+                            "Le serveur n'a pas retourné de token."
+                    );
                 }
 
                 String accountRole = account == null
@@ -260,19 +396,23 @@ public class MainActivity extends Activity {
                         .apply();
 
                 runOnUiThread(() -> {
+
                     showDashboard();
                     loadVehicles();
+
                 });
 
             } catch (Exception e) {
+
                 showMessage("Erreur : " + e.getMessage());
             }
+
         });
     }
 
-    // --------------------------------------------------
-    // SERVEUR
-    // --------------------------------------------------
+    // ==================================================
+    // REQUÊTES API
+    // ==================================================
 
     private JSONObject request(
             String method,
@@ -284,15 +424,21 @@ public class MainActivity extends Activity {
         String base = serverUrl.trim().replaceAll("/+$", "");
 
         URL url = new URL(base + path);
+
         HttpURLConnection connection =
                 (HttpURLConnection) url.openConnection();
 
         connection.setRequestMethod(method);
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(7000);
-        connection.setRequestProperty("Accept", "application/json");
+        connection.setConnectTimeout(7000);
+        connection.setReadTimeout(15000);
+
+        connection.setRequestProperty(
+                "Accept",
+                "application/json"
+        );
 
         if (authenticated && !token.isEmpty()) {
+
             connection.setRequestProperty(
                     "Authorization",
                     "Bearer " + token
@@ -300,14 +446,19 @@ public class MainActivity extends Activity {
         }
 
         if (body != null) {
+
             connection.setDoOutput(true);
+
             connection.setRequestProperty(
                     "Content-Type",
                     "application/json; charset=UTF-8"
             );
 
             try (OutputStream os = connection.getOutputStream()) {
-                os.write(body.toString().getBytes("UTF-8"));
+
+                os.write(
+                        body.toString().getBytes(StandardCharsets.UTF_8)
+                );
             }
         }
 
@@ -320,10 +471,15 @@ public class MainActivity extends Activity {
         StringBuilder response = new StringBuilder();
 
         if (stream != null) {
+
             try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(stream, "UTF-8"))) {
+                    new InputStreamReader(
+                            stream,
+                            StandardCharsets.UTF_8
+                    ))) {
 
                 String line;
+
                 while ((line = reader.readLine()) != null) {
                     response.append(line);
                 }
@@ -337,17 +493,26 @@ public class MainActivity extends Activity {
                 : new JSONObject(response.toString());
 
         if (status < 200 || status >= 300) {
+
             throw new Exception(
-                    result.optString("message",
-                            "Erreur HTTP " + status)
+                    result.optString(
+                            "message",
+                            "Erreur HTTP " + status
+                    )
             );
         }
 
         return result;
     }
 
+    // ==================================================
+    // TEST SERVEUR
+    // ==================================================
+
     private void testConnection() {
+
         if (serverUrl.isEmpty()) {
+
             showMessage("Saisissez l'adresse du serveur.");
             return;
         }
@@ -355,7 +520,9 @@ public class MainActivity extends Activity {
         showMessage("Test de connexion...");
 
         executor.execute(() -> {
+
             try {
+
                 JSONObject result = request(
                         "GET",
                         "/api/health",
@@ -363,77 +530,115 @@ public class MainActivity extends Activity {
                         false
                 );
 
-                showMessage("Serveur accessible : " +
-                        result.optString("application", "KEMS") +
-                        " - Version " +
-                        result.optString("version", "?"));
+                prefs.edit()
+                        .putString("server", serverUrl)
+                        .apply();
 
-                prefs.edit().putString("server", serverUrl).apply();
+                showMessage(
+                        "SERVEUR ACCESSIBLE\n" +
+                        "Application : " +
+                        result.optString("application", "KEMS") +
+                        "\nVersion : " +
+                        result.optString("version", "?")
+                );
 
             } catch (Exception e) {
-                showMessage("Serveur inaccessible : " + e.getMessage());
+
+                showMessage(
+                        "SERVEUR INACCESSIBLE : " + e.getMessage()
+                );
             }
+
         });
     }
 
+    // ==================================================
+    // DÉTECTION AUTOMATIQUE WI-FI
+    // ==================================================
+
     private void detectServer(EditText serverField) {
+
         showMessage("Recherche du serveur sur le Wi-Fi...");
 
         executor.execute(() -> {
+
+            ExecutorService scanPool =
+                    Executors.newFixedThreadPool(32);
+
             try {
+
                 WifiManager wifi = (WifiManager)
                         getApplicationContext().getSystemService(
                                 Context.WIFI_SERVICE
                         );
 
                 if (wifi == null || !wifi.isWifiEnabled()) {
+
                     throw new Exception("Activez le Wi-Fi.");
                 }
 
                 int ip = wifi.getDhcpInfo().ipAddress;
 
                 if (ip == 0) {
-                    throw new Exception("Adresse Wi-Fi introuvable.");
+
+                    throw new Exception(
+                            "Adresse Wi-Fi introuvable."
+                    );
                 }
 
                 String localIp = Formatter.formatIpAddress(ip);
+
                 String[] parts = localIp.split("\\.");
 
                 if (parts.length != 4) {
-                    throw new Exception("Adresse IP non reconnue.");
+
+                    throw new Exception(
+                            "Adresse IP non reconnue."
+                    );
                 }
 
                 String subnet =
-                        parts[0] + "." + parts[1] + "." + parts[2] + ".";
+                        parts[0] + "." +
+                        parts[1] + "." +
+                        parts[2] + ".";
 
                 CompletionService<String> completion =
-                        new ExecutorCompletionService<>(executor);
+                        new ExecutorCompletionService<>(scanPool);
 
                 int submitted = 0;
 
                 for (int i = 1; i <= 254; i++) {
+
                     final String address = subnet + i;
 
                     if (address.equals(localIp)) continue;
 
                     completion.submit(() -> {
+
                         try {
+
                             String candidate =
                                     "http://" + address + ":3001";
 
-                            URL url = new URL(candidate + "/api/health");
+                            URL url = new URL(
+                                    candidate + "/api/health"
+                            );
 
                             HttpURLConnection c =
-                                    (HttpURLConnection) url.openConnection();
+                                    (HttpURLConnection)
+                                            url.openConnection();
 
-                            c.setConnectTimeout(500);
-                            c.setReadTimeout(500);
+                            c.setConnectTimeout(700);
+                            c.setReadTimeout(700);
                             c.setRequestMethod("GET");
 
                             int code = c.getResponseCode();
+
                             c.disconnect();
 
-                            if (code == 200) return candidate;
+                            if (code == 200) {
+                                return candidate;
+                            }
 
                         } catch (Exception ignored) {
                         }
@@ -444,20 +649,28 @@ public class MainActivity extends Activity {
                     submitted++;
                 }
 
-                long end = System.currentTimeMillis() + 15000;
+                long end =
+                        System.currentTimeMillis() + 20000;
 
                 for (int i = 0; i < submitted; i++) {
-                    long remaining = end - System.currentTimeMillis();
+
+                    long remaining =
+                            end - System.currentTimeMillis();
+
                     if (remaining <= 0) break;
 
                     Future<String> future =
-                            completion.poll(remaining, TimeUnit.MILLISECONDS);
+                            completion.poll(
+                                    remaining,
+                                    TimeUnit.MILLISECONDS
+                            );
 
                     if (future == null) break;
 
                     String found = future.get();
 
                     if (found != null) {
+
                         serverUrl = found;
 
                         prefs.edit()
@@ -465,60 +678,514 @@ public class MainActivity extends Activity {
                                 .apply();
 
                         runOnUiThread(() ->
-                                serverField.setText(serverUrl));
+                                serverField.setText(serverUrl)
+                        );
 
-                        showMessage("Serveur détecté : " + serverUrl);
+                        showMessage(
+                                "SERVEUR DÉTECTÉ : " + serverUrl
+                        );
+
                         return;
                     }
                 }
 
                 showMessage(
-                        "Serveur non détecté. Vérifiez le port 3001 et le Wi-Fi."
+                        "Serveur non détecté. Vérifiez le port 3001."
                 );
 
             } catch (Exception e) {
-                showMessage("Détection impossible : " + e.getMessage());
+
+                showMessage(
+                        "Détection impossible : " + e.getMessage()
+                );
+
+            } finally {
+
+                scanPool.shutdownNow();
             }
+
         });
     }
 
-    // --------------------------------------------------
-    // PARAMÈTRES
-    // --------------------------------------------------
+    // ==================================================
+    // PARAMÈTRES SERVEUR ET JSON
+    // ==================================================
 
     private void showSettings() {
+
         createScreen("PARAMÈTRES SERVEUR");
 
-        EditText server = field("http://Adresse-IP:3001");
+        content.addView(text(
+                "1. CONNEXION AU SERVEUR",
+                18
+        ));
+
+        EditText server = field(
+                "192.168.1.10:3001"
+        );
+
         server.setText(serverUrl);
 
-        content.addView(text("Adresse du serveur KEMS", 14));
+        content.addView(text(
+                "Adresse IP du serveur",
+                14
+        ));
+
         content.addView(server);
 
-        content.addView(button("ENREGISTRER L'ADRESSE", () -> {
-            serverUrl = server.getText().toString().trim();
+        content.addView(button(
+                "DÉTECTION AUTOMATIQUE WI-FI",
+                () -> detectServer(server)
+        ));
 
-            prefs.edit().putString("server", serverUrl).apply();
+        content.addView(button(
+                "ENREGISTRER L'ADRESSE MANUELLE",
+                () -> {
 
-            showMessage("Adresse enregistrée.");
-        }));
+                    try {
 
-        content.addView(button("DÉTECTION AUTOMATIQUE WI-FI", () ->
-                detectServer(server)));
+                        serverUrl = normalizeServerUrl(
+                                server.getText().toString()
+                        );
 
-        content.addView(button("TESTER LE SERVEUR", () -> {
-            serverUrl = server.getText().toString().trim();
-            testConnection();
-        }));
+                        prefs.edit()
+                                .putString("server", serverUrl)
+                                .apply();
 
-        content.addView(button("RETOUR CONNEXION", this::showLogin));
+                        server.setText(serverUrl);
+
+                        showMessage(
+                                "Adresse enregistrée : " + serverUrl
+                        );
+
+                    } catch (Exception e) {
+
+                        showMessage(e.getMessage());
+                    }
+                }
+        ));
+
+        content.addView(button(
+                "TESTER LA CONNEXION",
+                () -> {
+
+                    try {
+
+                        serverUrl = normalizeServerUrl(
+                                server.getText().toString()
+                        );
+
+                        testConnection();
+
+                    } catch (Exception e) {
+
+                        showMessage(e.getMessage());
+                    }
+                }
+        ));
+
+        addSpace();
+
+        content.addView(text(
+                "2. IMPORTATION BASE DE DONNÉES",
+                18
+        ));
+
+        content.addView(text(
+                "Sélectionnez un fichier JSON contenant " +
+                "les informations des véhicules.",
+                13
+        ));
+
+        jsonFileLabel = text(
+                selectedJsonName,
+                14
+        );
+
+        jsonFileLabel.setBackgroundColor(
+                Color.parseColor(PANEL)
+        );
+
+        content.addView(jsonFileLabel);
+
+        content.addView(button(
+                "CHOISIR UN FICHIER JSON",
+                this::chooseJsonFile
+        ));
+
+        content.addView(button(
+                "IMPORTER LA BASE JSON",
+                this::showImportOptions
+        ));
+
+        addSpace();
+
+        content.addView(text(
+                "3. SESSION",
+                18
+        ));
+
+        content.addView(button(
+                "RETOUR",
+                () -> {
+
+                    if (!token.isEmpty()) {
+
+                        showDashboard();
+                        loadVehicles();
+
+                    } else {
+
+                        showLogin();
+                    }
+                }
+        ));
     }
 
-    // --------------------------------------------------
+    // ==================================================
+    // CHOISIR UN FICHIER JSON
+    // ==================================================
+
+    private void chooseJsonFile() {
+
+        Intent intent = new Intent(
+                Intent.ACTION_OPEN_DOCUMENT
+        );
+
+        intent.addCategory(
+                Intent.CATEGORY_OPENABLE
+        );
+
+        intent.setType("application/json");
+
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+        );
+
+        try {
+
+            startActivityForResult(
+                    intent,
+                    REQUEST_IMPORT_JSON
+            );
+
+        } catch (Exception e) {
+
+            showMessage(
+                    "Impossible d'ouvrir le gestionnaire de fichiers."
+            );
+        }
+    }
+
+    @Override
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            Intent data
+    ) {
+
+        super.onActivityResult(
+                requestCode,
+                resultCode,
+                data
+        );
+
+        if (requestCode != REQUEST_IMPORT_JSON) return;
+
+        if (resultCode != RESULT_OK ||
+                data == null ||
+                data.getData() == null) {
+
+            showMessage("Aucun fichier sélectionné.");
+            return;
+        }
+
+        Uri uri = data.getData();
+
+        String fileName = getFileName(uri);
+
+        if (!fileName.toLowerCase().endsWith(".json")) {
+
+            showMessage(
+                    "Format invalide. Sélectionnez un fichier .json."
+            );
+
+            return;
+        }
+
+        selectedJsonUri = uri;
+        selectedJsonName = fileName;
+
+        if (jsonFileLabel != null) {
+
+            jsonFileLabel.setText(
+                    "Fichier sélectionné :\n" + fileName
+            );
+        }
+
+        showMessage(
+                "Fichier sélectionné : " + fileName
+        );
+
+        notifyUser(
+                "Fichier JSON sélectionné : " + fileName
+        );
+    }
+
+    private String getFileName(Uri uri) {
+
+        String result = "fichier.json";
+
+        try (Cursor cursor = getContentResolver()
+                .query(uri, null, null, null, null)) {
+
+            if (cursor != null &&
+                    cursor.moveToFirst()) {
+
+                int index = cursor.getColumnIndex(
+                        OpenableColumns.DISPLAY_NAME
+                );
+
+                if (index >= 0) {
+
+                    result = cursor.getString(index);
+                }
+            }
+
+        } catch (Exception ignored) {
+        }
+
+        return result;
+    }
+
+    // ==================================================
+    // LIRE ET VALIDER JSON
+    // ==================================================
+
+    private JSONArray readJsonVehicles(Uri uri) throws Exception {
+
+        ByteArrayOutputStream output =
+                new ByteArrayOutputStream();
+
+        try (InputStream input =
+                     getContentResolver().openInputStream(uri)) {
+
+            if (input == null) {
+
+                throw new Exception(
+                        "Impossible de lire le fichier."
+                );
+            }
+
+            byte[] buffer = new byte[8192];
+
+            int count;
+            int total = 0;
+
+            while ((count = input.read(buffer)) != -1) {
+
+                total += count;
+
+                if (total > MAX_JSON_SIZE) {
+
+                    throw new Exception(
+                            "Fichier trop volumineux (maximum 20 Mo)."
+                    );
+                }
+
+                output.write(buffer, 0, count);
+            }
+        }
+
+        String json = new String(
+                output.toByteArray(),
+                StandardCharsets.UTF_8
+        );
+
+        json = json.trim();
+
+        if (json.startsWith("\uFEFF")) {
+            json = json.substring(1);
+        }
+
+        if (json.startsWith("[")) {
+
+            return new JSONArray(json);
+        }
+
+        JSONObject object = new JSONObject(json);
+
+        JSONArray array = object.optJSONArray("vehicles");
+
+        if (array == null) {
+
+            throw new Exception(
+                    "Le fichier ne contient pas de liste 'vehicles'."
+            );
+        }
+
+        return array;
+    }
+
+    private void showImportOptions() {
+
+        if (selectedJsonUri == null) {
+
+            showMessage(
+                    "Aucun fichier sélectionné. Choisissez un fichier JSON."
+            );
+
+            notifyUser(
+                    "Veuillez choisir un fichier JSON avant l'importation."
+            );
+
+            return;
+        }
+
+        String[] options = {
+                "Ajouter les véhicules sans doublons",
+                "Remplacer toute la base de véhicules"
+        };
+
+        new AlertDialog.Builder(this)
+                .setTitle("Mode d'importation")
+                .setItems(options, (dialog, which) -> {
+
+                    if (which == 0) {
+
+                        importJson("add");
+
+                    } else if (which == 1) {
+
+                        if (!role.equalsIgnoreCase("Administrateur")) {
+
+                            showMessage(
+                                    "Seul l'administrateur peut remplacer la base."
+                            );
+
+                            return;
+                        }
+
+                        new AlertDialog.Builder(this)
+                                .setTitle("Attention")
+                                .setMessage(
+                                        "Cette opération remplace toute " +
+                                        "la base de véhicules du serveur. " +
+                                        "Une sauvegarde serveur doit être " +
+                                        "effectuée avant le remplacement."
+                                )
+                                .setNegativeButton("ANNULER", null)
+                                .setPositiveButton(
+                                        "CONFIRMER",
+                                        (d, w) -> importJson("replace")
+                                )
+                                .show();
+                    }
+                })
+                .setNegativeButton("ANNULER", null)
+                .show();
+    }
+
+    private void importJson(String mode) {
+
+        if (selectedJsonUri == null) {
+
+            showMessage("Aucun fichier JSON sélectionné.");
+            return;
+        }
+
+        showMessage(
+                "Lecture du fichier " + selectedJsonName + "..."
+        );
+
+        executor.execute(() -> {
+
+            try {
+
+                JSONArray imported =
+                        readJsonVehicles(selectedJsonUri);
+
+                if (imported.length() == 0) {
+
+                    throw new Exception(
+                            "Le fichier ne contient aucun véhicule."
+                    );
+                }
+
+                if (imported.length() > 5000) {
+
+                    throw new Exception(
+                            "Maximum autorisé : 5000 véhicules."
+                    );
+                }
+
+                JSONObject body = new JSONObject();
+
+                body.put("mode", mode);
+                body.put("vehicles", imported);
+
+                showMessage(
+                        "Envoi de " + imported.length() +
+                        " véhicule(s) au serveur..."
+                );
+
+                JSONObject result = request(
+                        "POST",
+                        "/api/fleet/vehicles/import",
+                        body,
+                        true
+                );
+
+                int importedCount =
+                        result.optInt("imported", imported.length());
+
+                int skippedCount =
+                        result.optInt("skipped", 0);
+
+                String successMessage =
+                        result.optString(
+                                "message",
+                                "Importation terminée."
+                        );
+
+                showMessage(
+                        successMessage +
+                        "\nImportés : " + importedCount +
+                        "\nIgnorés : " + skippedCount
+                );
+
+                notifyUser(
+                        "Importation terminée : " +
+                        importedCount + " véhicule(s)."
+                );
+
+                runOnUiThread(() -> {
+
+                    showDashboard();
+                    loadVehicles();
+
+                });
+
+            } catch (Exception e) {
+
+                showMessage(
+                        "ÉCHEC IMPORT JSON : " + e.getMessage()
+                );
+
+                notifyUser(
+                        "Importation impossible : " + e.getMessage()
+                );
+            }
+
+        });
+    }
+
+    // ==================================================
     // TABLEAU DE BORD
-    // --------------------------------------------------
+    // ==================================================
 
     private void showDashboard() {
+
         createScreen("GESTION DE PARC AUTOMOBILE");
 
         content.addView(text(
@@ -528,36 +1195,84 @@ public class MainActivity extends Activity {
                 13
         ));
 
-        content.addView(button("TABLEAU DE BORD", this::loadVehicles));
+        content.addView(button(
+                "TABLEAU DE BORD",
+                this::loadVehicles
+        ));
 
-        content.addView(button("LISTE DES VÉHICULES", this::loadVehicles));
+        content.addView(button(
+                "LISTE DES VÉHICULES",
+                this::loadVehicles
+        ));
 
-        content.addView(button("AJOUTER UN VÉHICULE", () ->
-                vehicleDialog(null)));
+        if (!role.equalsIgnoreCase("Consultation")) {
 
-        content.addView(button("PARAMÈTRES SERVEUR", this::showSettings));
+            content.addView(button(
+                    "AJOUTER UN VÉHICULE",
+                    () -> vehicleDialog(null)
+            ));
+        }
 
-        content.addView(button("DÉCONNEXION", this::logout));
+        content.addView(button(
+                "PARAMÈTRES SERVEUR",
+                this::showSettings
+        ));
+
+        content.addView(button(
+                "DÉCONNEXION",
+                this::logout
+        ));
 
         addSpace();
 
-        content.addView(text("PARC AUTOMOBILE", 19));
+        content.addView(text(
+                "PARC AUTOMOBILE",
+                19
+        ));
 
-        content.addView(button("ACTUALISER", this::loadVehicles));
+        content.addView(button(
+                "ACTUALISER",
+                this::loadVehicles
+        ));
 
-        content.addView(text("Véhicules enregistrés :", 14));
+        content.addView(text(
+                "Véhicules enregistrés :",
+                14
+        ));
 
         content.addView(vehicleListView());
     }
 
     private LinearLayout vehicleListView() {
+
         LinearLayout list = new LinearLayout(this);
+
         list.setOrientation(LinearLayout.VERTICAL);
         list.setTag("vehicle_list");
+
         return list;
     }
 
+    private LinearLayout findVehicleList() {
+
+        if (content == null) return null;
+
+        for (int i = 0; i < content.getChildCount(); i++) {
+
+            View view = content.getChildAt(i);
+
+            if (view instanceof LinearLayout &&
+                    "vehicle_list".equals(view.getTag())) {
+
+                return (LinearLayout) view;
+            }
+        }
+
+        return null;
+    }
+
     private void refreshVehicleList() {
+
         LinearLayout list = findVehicleList();
 
         if (list == null) return;
@@ -565,30 +1280,47 @@ public class MainActivity extends Activity {
         list.removeAllViews();
 
         if (vehicles.length() == 0) {
-            list.addView(text("Aucun véhicule enregistré.", 14));
+
+            list.addView(text(
+                    "Aucun véhicule enregistré.",
+                    14
+            ));
+
             return;
         }
 
         for (int i = 0; i < vehicles.length(); i++) {
-            JSONObject vehicle = vehicles.optJSONObject(i);
+
+            JSONObject vehicle =
+                    vehicles.optJSONObject(i);
 
             if (vehicle == null) continue;
 
             String id = vehicle.optString("id", "");
-            String registration = vehicle.optString("registration", "");
+            String registration =
+                    vehicle.optString("registration", "");
+
             String brand = vehicle.optString("brand", "");
             String model = vehicle.optString("model", "");
             String status = vehicle.optString("status", "");
-            String assignment = vehicle.optString("assignment", "");
-            String mileage = vehicle.optString("mileage", "");
+            String assignment =
+                    vehicle.optString("assignment", "");
+
+            String mileage =
+                    vehicle.optString("mileage", "");
 
             LinearLayout card = new LinearLayout(this);
+
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(10, 8, 10, 8);
-            card.setBackgroundColor(Color.parseColor(PANEL));
+
+            card.setBackgroundColor(
+                    Color.parseColor(PANEL)
+            );
 
             LinearLayout.LayoutParams cp =
                     new LinearLayout.LayoutParams(-1, -2);
+
             cp.setMargins(0, 5, 0, 5);
             card.setLayoutParams(cp);
 
@@ -604,42 +1336,38 @@ public class MainActivity extends Activity {
                     13
             ));
 
-            card.addView(button("MODIFIER", () ->
-                    vehicleDialog(vehicle)));
+            if (!role.equalsIgnoreCase("Consultation")) {
+
+                card.addView(button(
+                        "MODIFIER",
+                        () -> vehicleDialog(vehicle)
+                ));
+            }
 
             if (role.equalsIgnoreCase("Administrateur")) {
-                card.addView(button("SUPPRIMER", () ->
-                        confirmDelete(id, registration)));
+
+                card.addView(button(
+                        "SUPPRIMER",
+                        () -> confirmDelete(id, registration)
+                ));
             }
 
             list.addView(card);
         }
     }
 
-    private LinearLayout findVehicleList() {
-        if (content == null) return null;
-
-        for (int i = 0; i < content.getChildCount(); i++) {
-            View view = content.getChildAt(i);
-
-            if (view instanceof LinearLayout &&
-                    "vehicle_list".equals(view.getTag())) {
-                return (LinearLayout) view;
-            }
-        }
-
-        return null;
-    }
-
-    // --------------------------------------------------
-    // VÉHICULES
-    // --------------------------------------------------
+    // ==================================================
+    // CHARGEMENT DES VÉHICULES
+    // ==================================================
 
     private void loadVehicles() {
+
         showMessage("Chargement des véhicules...");
 
         executor.execute(() -> {
+
             try {
+
                 JSONObject result = request(
                         "GET",
                         "/api/fleet/vehicles",
@@ -647,31 +1375,50 @@ public class MainActivity extends Activity {
                         true
                 );
 
-                vehicles = result.optJSONArray("vehicles");
+                JSONArray data =
+                        result.optJSONArray("vehicles");
 
-                if (vehicles == null) vehicles = new JSONArray();
+                vehicles = data == null
+                        ? new JSONArray()
+                        : data;
 
                 runOnUiThread(() -> {
+
                     if (content == null) return;
 
                     if (findVehicleList() == null) {
+
                         showDashboard();
                     }
 
                     refreshVehicleList();
-                    showMessage(vehicles.length() + " véhicule(s) chargé(s).");
+
+                    showMessage(
+                            vehicles.length() +
+                            " véhicule(s) chargé(s)."
+                    );
                 });
 
             } catch (Exception e) {
-                showMessage("Erreur chargement : " + e.getMessage());
+
+                showMessage(
+                        "Erreur chargement : " + e.getMessage()
+                );
             }
+
         });
     }
 
+    // ==================================================
+    // AJOUT ET MODIFICATION
+    // ==================================================
+
     private void vehicleDialog(JSONObject vehicle) {
+
         boolean editing = vehicle != null;
 
         LinearLayout form = new LinearLayout(this);
+
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(12, 5, 12, 5);
 
@@ -699,7 +1446,11 @@ public class MainActivity extends Activity {
         form.addView(assignment);
 
         if (editing) {
-            registration.setText(vehicle.optString("registration"));
+
+            registration.setText(
+                    vehicle.optString("registration")
+            );
+
             brand.setText(vehicle.optString("brand"));
             model.setText(vehicle.optString("model"));
             type.setText(vehicle.optString("type"));
@@ -707,66 +1458,117 @@ public class MainActivity extends Activity {
             mileage.setText(vehicle.optString("mileage"));
             fuel.setText(vehicle.optString("fuel"));
             status.setText(vehicle.optString("status"));
-            assignment.setText(vehicle.optString("assignment"));
+
+            assignment.setText(
+                    vehicle.optString("assignment")
+            );
+
         } else {
+
             status.setText("Disponible");
         }
 
         ScrollView scroll = new ScrollView(this);
+
         scroll.addView(form);
 
         new AlertDialog.Builder(this)
-                .setTitle(editing ? "Modifier véhicule" : "Nouveau véhicule")
+                .setTitle(
+                        editing
+                                ? "Modifier véhicule"
+                                : "Nouveau véhicule"
+                )
                 .setView(scroll)
                 .setNegativeButton("ANNULER", null)
-                .setPositiveButton("ENREGISTRER", (dialog, which) -> {
+                .setPositiveButton(
+                        "ENREGISTRER",
+                        (dialog, which) -> {
 
-                    try {
-                        JSONObject data = new JSONObject();
+                            try {
 
-                        data.put("registration",
-                                registration.getText().toString().trim());
+                                JSONObject data =
+                                        new JSONObject();
 
-                        data.put("brand",
-                                brand.getText().toString().trim());
+                                data.put(
+                                        "registration",
+                                        registration.getText()
+                                                .toString().trim()
+                                );
 
-                        data.put("model",
-                                model.getText().toString().trim());
+                                data.put(
+                                        "brand",
+                                        brand.getText()
+                                                .toString().trim()
+                                );
 
-                        data.put("type",
-                                type.getText().toString().trim());
+                                data.put(
+                                        "model",
+                                        model.getText()
+                                                .toString().trim()
+                                );
 
-                        data.put("year",
-                                Integer.parseInt(year.getText().toString()));
+                                data.put(
+                                        "type",
+                                        type.getText()
+                                                .toString().trim()
+                                );
 
-                        data.put("mileage",
-                                Double.parseDouble(mileage.getText().toString()));
+                                data.put(
+                                        "year",
+                                        Integer.parseInt(
+                                                year.getText().toString()
+                                        )
+                                );
 
-                        data.put("fuel",
-                                fuel.getText().toString().trim());
+                                data.put(
+                                        "mileage",
+                                        Double.parseDouble(
+                                                mileage.getText().toString()
+                                        )
+                                );
 
-                        data.put("status",
-                                status.getText().toString().trim());
+                                data.put(
+                                        "fuel",
+                                        fuel.getText().toString().trim()
+                                );
 
-                        data.put("assignment",
-                                assignment.getText().toString().trim());
+                                data.put(
+                                        "status",
+                                        status.getText().toString().trim()
+                                );
 
-                        saveVehicle(data, editing
-                                ? vehicle.optString("id")
-                                : null);
+                                data.put(
+                                        "assignment",
+                                        assignment.getText()
+                                                .toString().trim()
+                                );
 
-                    } catch (Exception e) {
-                        showMessage("Vérifiez les champs obligatoires.");
-                    }
-                })
+                                saveVehicle(
+                                        data,
+                                        editing
+                                                ? vehicle.optString("id")
+                                                : null
+                                );
+
+                            } catch (Exception e) {
+
+                                showMessage(
+                                        "Vérifiez les champs obligatoires."
+                                );
+                            }
+                        }
+                )
                 .show();
     }
 
     private void saveVehicle(JSONObject data, String id) {
+
         showMessage("Enregistrement...");
 
         executor.execute(() -> {
+
             try {
+
                 String path = "/api/fleet/vehicles";
 
                 if (id != null && !id.isEmpty()) {
@@ -780,34 +1582,56 @@ public class MainActivity extends Activity {
                         true
                 );
 
-                showMessage(result.optString(
-                        "message",
-                        "Véhicule enregistré."
-                ));
+                showMessage(
+                        result.optString(
+                                "message",
+                                "Véhicule enregistré."
+                        )
+                );
 
                 loadVehicles();
 
             } catch (Exception e) {
-                showMessage("Erreur : " + e.getMessage());
+
+                showMessage(
+                        "Erreur : " + e.getMessage()
+                );
             }
+
         });
     }
 
-    private void confirmDelete(String id, String registration) {
+    // ==================================================
+    // SUPPRESSION
+    // ==================================================
+
+    private void confirmDelete(
+            String id,
+            String registration
+    ) {
+
         new AlertDialog.Builder(this)
                 .setTitle("Suppression")
-                .setMessage("Supprimer le véhicule " + registration + " ?")
+                .setMessage(
+                        "Supprimer le véhicule " +
+                        registration + " ?"
+                )
                 .setNegativeButton("ANNULER", null)
-                .setPositiveButton("SUPPRIMER", (dialog, which) ->
-                        deleteVehicle(id))
+                .setPositiveButton(
+                        "SUPPRIMER",
+                        (dialog, which) -> deleteVehicle(id)
+                )
                 .show();
     }
 
     private void deleteVehicle(String id) {
+
         showMessage("Suppression en cours...");
 
         executor.execute(() -> {
+
             try {
+
                 JSONObject result = request(
                         "DELETE",
                         "/api/fleet/vehicles/" + id,
@@ -815,32 +1639,42 @@ public class MainActivity extends Activity {
                         true
                 );
 
-                showMessage(result.optString(
-                        "message",
-                        "Véhicule supprimé."
-                ));
+                showMessage(
+                        result.optString(
+                                "message",
+                                "Véhicule supprimé."
+                        )
+                );
 
                 loadVehicles();
 
             } catch (Exception e) {
-                showMessage("Erreur suppression : " + e.getMessage());
+
+                showMessage(
+                        "Erreur suppression : " + e.getMessage()
+                );
             }
+
         });
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // DÉCONNEXION
-    // --------------------------------------------------
+    // ==================================================
 
     private void logout() {
+
         executor.execute(() -> {
+
             try {
+
                 request(
                         "POST",
                         "/api/auth/logout",
                         new JSONObject(),
                         true
                 );
+
             } catch (Exception ignored) {
             }
 
@@ -858,9 +1692,15 @@ public class MainActivity extends Activity {
         });
     }
 
+    // ==================================================
+    // FERMETURE
+    // ==================================================
+
     @Override
     protected void onDestroy() {
+
         super.onDestroy();
+
         executor.shutdownNow();
     }
 }
