@@ -1,1 +1,728 @@
 
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#0c1714">
+<title>KEMS FLEET</title>
+
+<style>
+:root {
+  --bg:#0c1714;
+  --panel:#14251f;
+  --panel2:#1b3028;
+  --green:#65e6a5;
+  --text:#f2fff8;
+  --muted:#9bb5a8;
+  --red:#ff7373;
+  --yellow:#f5cf68;
+  --border:#294438;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Arial,sans-serif;
+}
+button,input,select { font:inherit; }
+button {
+  border:0;
+  border-radius:9px;
+  padding:12px 15px;
+  background:var(--green);
+  color:#082017;
+  font-weight:bold;
+  cursor:pointer;
+}
+button.secondary {
+  background:var(--panel2);
+  color:var(--text);
+  border:1px solid var(--border);
+}
+button.danger { background:#7c2929;color:white; }
+button:disabled { opacity:.5;cursor:not-allowed; }
+input,select {
+  width:100%;
+  padding:12px;
+  border-radius:8px;
+  border:1px solid var(--border);
+  background:#0e1d17;
+  color:var(--text);
+  outline:none;
+}
+input:focus,select:focus { border-color:var(--green); }
+label {
+  display:block;
+  margin:12px 0 6px;
+  color:var(--muted);
+  font-size:13px;
+}
+.topbar {
+  position:sticky;
+  top:0;
+  z-index:5;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 16px;
+  background:#101f19;
+  border-bottom:1px solid var(--border);
+}
+.logo {
+  width:43px;height:43px;object-fit:contain;
+  border-radius:9px;background:var(--panel);
+}
+.brand { font-weight:bold;letter-spacing:1px; }
+.brand small { display:block;color:var(--green);font-size:11px;margin-top:3px; }
+#app { display:none; }
+.container { max-width:1100px;margin:auto;padding:16px; }
+.panel {
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:13px;
+  padding:16px;
+  margin-bottom:15px;
+}
+h2 { font-size:18px;margin:0 0 14px; }
+h3 { font-size:15px;margin:0 0 10px; }
+.muted { color:var(--muted);font-size:13px; }
+.grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+}
+.stat {
+  background:var(--panel2);
+  border:1px solid var(--border);
+  border-radius:11px;
+  padding:15px;
+}
+.stat strong { display:block;font-size:25px;color:var(--green);margin-top:7px; }
+.actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px; }
+.actions button { flex:1;min-width:110px; }
+.toolbar { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px; }
+.toolbar > * { flex:1;min-width:130px; }
+.vehicle {
+  padding:14px;
+  background:#102019;
+  border:1px solid var(--border);
+  border-radius:11px;
+  margin-top:10px;
+}
+.vehicle-head {
+  display:flex;justify-content:space-between;gap:8px;
+  align-items:flex-start;
+}
+.vehicle-title { font-weight:bold;font-size:16px; }
+.vehicle-sub { color:var(--muted);font-size:12px;margin-top:5px; }
+.vehicle-info {
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;margin-top:12px;font-size:13px;
+}
+.vehicle-info span { color:var(--muted); }
+.status {
+  display:inline-block;padding:5px 8px;border-radius:20px;
+  font-size:11px;background:#244435;color:var(--green);
+}
+.status.maintenance { background:#493d20;color:var(--yellow); }
+.status.off { background:#512929;color:#ffaaaa; }
+.form-grid {
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px;
+}
+.full { grid-column:1/-1; }
+#loginScreen {
+  max-width:440px;margin:8vh auto;padding:18px;
+}
+#loginScreen .panel { padding:22px; }
+.login-logo {
+  display:block;width:90px;height:90px;object-fit:contain;
+  margin:0 auto 12px;border-radius:18px;
+}
+.notice {
+  padding:11px;border-radius:8px;margin:10px 0;
+  background:#203a2d;color:var(--green);font-size:13px;
+}
+.error { background:#482626;color:#ffb4b4; }
+.hidden { display:none!important; }
+#message { white-space:pre-wrap;font-size:13px;margin:10px 0; }
+.empty { text-align:center;color:var(--muted);padding:25px; }
+.footer { text-align:center;color:var(--muted);font-size:11px;padding:20px; }
+@media(max-width:560px) {
+  .container { padding:11px; }
+  .form-grid { grid-template-columns:1fr; }
+  .full { grid-column:auto; }
+  .vehicle-info { grid-template-columns:1fr 1fr; }
+}
+</style>
+</head>
+
+<body>
+
+<header class="topbar">
+  <img id="headerLogo" class="logo" alt="KEMS">
+  <div class="brand">KEMS FLEET<small>GESTION DE PARC AUTOMOBILE</small></div>
+  <div style="margin-left:auto">
+    <button id="logoutBtn" class="secondary hidden" onclick="logout()">Déconnexion</button>
+  </div>
+</header>
+
+<section id="loginScreen">
+  <div class="panel">
+    <img id="loginLogo" class="login-logo" alt="KEMS FLEET">
+    <h2 style="text-align:center">Connexion</h2>
+    <p class="muted" style="text-align:center">Connectez-vous à votre serveur KEMS FLEET</p>
+
+    <label>Adresse du serveur</label>
+    <input id="serverUrl" placeholder="http://192.168.1.100:3001" value="http://192.168.1.100:3001">
+
+    <label>Nom d'utilisateur</label>
+    <input id="username" autocomplete="username" placeholder="Votre identifiant">
+
+    <label>Mot de passe</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Votre mot de passe">
+
+    <div class="actions">
+      <button style="width:100%" onclick="login()">SE CONNECTER</button>
+    </div>
+    <div class="actions">
+      <button class="secondary" onclick="testServer()">TESTER LE SERVEUR</button>
+      <button class="secondary" onclick="discoverServer()">DÉTECTER</button>
+    </div>
+    <div id="loginMessage"></div>
+  </div>
+</section>
+
+<main id="app">
+  <div class="container">
+
+    <section class="grid">
+      <div class="stat">
+        <span class="muted">Total véhicules</span>
+        <strong id="totalCount">0</strong>
+      </div>
+      <div class="stat">
+        <span class="muted">Disponibles</span>
+        <strong id="availableCount">0</strong>
+      </div>
+      <div class="stat">
+        <span class="muted">En mission</span>
+        <strong id="missionCount">0</strong>
+      </div>
+      <div class="stat">
+        <span class="muted">Maintenance / Hors service</span>
+        <strong id="maintenanceCount">0</strong>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Parc automobile</h2>
+      <div class="toolbar">
+        <input id="search" placeholder="Rechercher immatriculation, marque..." oninput="renderVehicles()">
+        <select id="filterStatus" onchange="renderVehicles()">
+          <option value="">Tous les statuts</option>
+          <option>Disponible</option>
+          <option>En mission</option>
+          <option>En maintenance</option>
+          <option>Hors service</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button onclick="openForm()">+ NOUVEAU VÉHICULE</button>
+        <button class="secondary" onclick="loadVehicles()">ACTUALISER</button>
+      </div>
+      <div id="vehicleList"></div>
+    </section>
+
+    <section id="vehicleFormPanel" class="panel hidden">
+      <h2 id="formTitle">Nouveau véhicule</h2>
+      <form id="vehicleForm" onsubmit="saveVehicle(event)">
+        <input type="hidden" id="vehicleId">
+
+        <div class="form-grid">
+          <div>
+            <label>Immatriculation *</label>
+            <input id="registration" required>
+          </div>
+          <div>
+            <label>Marque *</label>
+            <input id="brand" required>
+          </div>
+          <div>
+            <label>Modèle *</label>
+            <input id="model" required>
+          </div>
+          <div>
+            <label>Type *</label>
+            <input id="type" required placeholder="Voiture, camion, moto...">
+          </div>
+          <div>
+            <label>Année *</label>
+            <input id="year" type="number" min="1950" required>
+          </div>
+          <div>
+            <label>Kilométrage *</label>
+            <input id="mileage" type="number" min="0" required>
+          </div>
+          <div>
+            <label>Carburant *</label>
+            <select id="fuel" required>
+              <option value="">Choisir</option>
+              <option>Essence</option>
+              <option>Diesel</option>
+              <option>Électrique</option>
+              <option>Hybride</option>
+              <optionAutre></optionAutre>
+            </select>
+          </div>
+          <div>
+            <label>Statut *</label>
+            <select id="status" required>
+              <option>Disponible</option>
+              <option>En mission</option>
+              <option>En maintenance</option>
+              <option>Hors service</option>
+            </select>
+          </div>
+          <div class="full">
+            <label>Affectation *</label>
+            <input id="assignment" required placeholder="Service, agence ou utilisateur">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="submit">ENREGISTRER</button>
+          <button type="button" class="secondary" onclick="closeForm()">ANNULER</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Outils et sauvegarde</h2>
+      <div class="actions">
+        <button class="secondary" onclick="exportJSON()">EXPORTER JSON</button>
+        <button class="secondary" onclick="document.getElementById('jsonFile').click()">IMPORTER JSON</button>
+        <input id="jsonFile" type="file" accept=".json,application/json" hidden onchange="importJSON(event)">
+      </div>
+      <label>Logo de l'application</label>
+      <input type="file" accept="image/png,image/jpeg,image/webp" onchange="importLogo(event)">
+      <div class="actions">
+        <button class="secondary" onclick="removeLogo()">SUPPRIMER LOGO</button>
+      </div>
+      <p class="muted">Le logo est enregistré localement sur cet appareil.</p>
+    </section>
+
+    <div id="appMessage"></div>
+    <div class="footer">KEMS FLEET · Gestion de parc automobile</div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+let token = localStorage.getItem("kems_fleet_token") || "";
+let vehicles = [];
+let currentRole = "";
+let currentUser = "";
+
+const DEFAULT_SERVER = "http://192.168.1.100:3001";
+$("serverUrl").value = localStorage.getItem("kems_fleet_server") || DEFAULT_SERVER;
+
+function server() {
+  return $("serverUrl").value.trim().replace(/\/+$/, "");
+}
+
+function showMessage(target, message, error=false) {
+  const el = $(target);
+  el.className = error ? "notice error" : "notice";
+  el.textContent = message;
+}
+
+function clearMessage(target) {
+  $(target).textContent = "";
+}
+
+function setLogo(data) {
+  $("headerLogo").src = data;
+  $("loginLogo").src = data;
+}
+
+const savedLogo = localStorage.getItem("kems_fleet_logo");
+if (savedLogo) {
+  setLogo(savedLogo);
+} else {
+  const fallback = "data:image/svg+xml;charset=UTF-8," +
+    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#14251f"/><path d="M25 18h12v28l28-28h17L54 49l29 33H65L37 53v29H25z" fill="#65e6a5"/></svg>');
+  setLogo(fallback);
+}
+
+async function api(path, options={}) {
+  const headers = Object.assign({}, options.headers || {});
+  if (token) headers.Authorization = "Bearer " + token;
+  if (options.body && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  let response;
+  try {
+    response = await fetch(server() + path, {
+      ...options,
+      headers,
+      cache:"no-store"
+    });
+  } catch (e) {
+    throw new Error("Connexion impossible. Vérifiez le Wi-Fi, l'adresse IP et le port 3001.");
+  }
+
+  const raw = await response.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; }
+  catch { data = {message:raw}; }
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || ("Erreur HTTP " + response.status));
+  }
+  return data;
+}
+
+async function testServer() {
+  clearMessage("loginMessage");
+  try {
+    const response = await fetch(server() + "/api/health", {cache:"no-store"});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    showMessage("loginMessage","Serveur accessible. Vous pouvez vous connecter.");
+    localStorage.setItem("kems_fleet_server",server());
+  } catch(e) {
+    showMessage("loginMessage",e.message,true);
+  }
+}
+
+async function discoverServer() {
+  const value = prompt("Saisissez l'adresse IP du PC serveur :", server());
+  if (!value) return;
+  $("serverUrl").value = value.startsWith("http") ? value : "http://" + value + ":3001";
+  await testServer();
+}
+
+async function login() {
+  clearMessage("loginMessage");
+  const username = $("username").value.trim();
+  const password = $("password").value;
+  if (!username || !password) {
+    showMessage("loginMessage","Saisissez votre identifiant et votre mot de passe.",true);
+    return;
+  }
+
+  try {
+    const result = await api("/api/auth/login", {
+      method:"POST",
+      body:JSON.stringify({username,password})
+    });
+
+    const newToken = result.token || result.accessToken ||
+      (result.data && (result.data.token || result.data.accessToken));
+
+    if (!newToken) {
+      throw new Error("Connexion reçue, mais aucun jeton d'accès n'a été trouvé dans la réponse du serveur. Vérifiez le format de /api/auth/login.");
+    }
+
+    token = newToken;
+    localStorage.setItem("kems_fleet_token",token);
+    localStorage.setItem("kems_fleet_server",server());
+
+    currentUser = result.user?.username || result.user?.name || username;
+    currentRole = result.user?.role || result.role || "";
+    showApp();
+    await loadVehicles();
+  } catch(e) {
+    token = "";
+    localStorage.removeItem("kems_fleet_token");
+    showMessage("loginMessage",e.message,true);
+  }
+}
+
+function showApp() {
+  $("loginScreen").style.display = "none";
+  $("app").style.display = "block";
+  $("logoutBtn").classList.remove("hidden");
+}
+
+async function logout() {
+  try {
+    await api("/api/auth/logout",{method:"POST"});
+  } catch(e) {}
+  token = "";
+  vehicles = [];
+  localStorage.removeItem("kems_fleet_token");
+  $("app").style.display = "none";
+  $("loginScreen").style.display = "block";
+  $("logoutBtn").classList.add("hidden");
+  $("password").value = "";
+}
+
+async function loadVehicles() {
+  try {
+    const result = await api("/api/fleet/vehicles/");
+    vehicles = Array.isArray(result.vehicles) ? result.vehicles : [];
+    renderVehicles();
+    updateStats();
+    clearMessage("appMessage");
+  } catch(e) {
+    showMessage("appMessage",e.message,true);
+  }
+}
+
+function updateStats() {
+  $("totalCount").textContent = vehicles.length;
+  $("availableCount").textContent = vehicles.filter(v=>v.status==="Disponible").length;
+  $("missionCount").textContent = vehicles.filter(v=>v.status==="En mission").length;
+  $("maintenanceCount").textContent = vehicles.filter(v=>
+    v.status==="En maintenance" || v.status==="Hors service"
+  ).length;
+}
+
+function statusClass(status) {
+  if (status==="En maintenance") return "maintenance";
+  if (status==="Hors service") return "off";
+  return "";
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[c]);
+}
+
+function renderVehicles() {
+  const q = $("search").value.trim().toLowerCase();
+  const filter = $("filterStatus").value;
+  const filtered = vehicles.filter(v => {
+    const haystack = [
+      v.registration,v.brand,v.model,v.type,v.assignment,v.status
+    ].join(" ").toLowerCase();
+    return (!q || haystack.includes(q)) && (!filter || v.status===filter);
+  });
+
+  const list = $("vehicleList");
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty">Aucun véhicule trouvé.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(v => `
+    <article class="vehicle">
+      <div class="vehicle-head">
+        <div>
+          <div class="vehicle-title">${escapeHTML(v.registration)}</div>
+          <div class="vehicle-sub">${escapeHTML(v.brand)} ${escapeHTML(v.model)}</div>
+        </div>
+        <span class="status ${statusClass(v.status)}">${escapeHTML(v.status)}</span>
+      </div>
+      <div class="vehicle-info">
+        <div><span>Type :</span> ${escapeHTML(v.type)}</div>
+        <div><span>Année :</span> ${escapeHTML(v.year)}</div>
+        <div><span>Kilométrage :</span> ${escapeHTML(v.mileage)} km</div>
+        <div><span>Carburant :</span> ${escapeHTML(v.fuel)}</div>
+        <div class="full"><span>Affectation :</span> ${escapeHTML(v.assignment)}</div>
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="editVehicle('${escapeHTML(v.id)}')">MODIFIER</button>
+        <button class="danger" onclick="deleteVehicle('${escapeHTML(v.id)}')">SUPPRIMER</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+function openForm() {
+  $("vehicleForm").reset();
+  $("vehicleId").value = "";
+  $("formTitle").textContent = "Nouveau véhicule";
+  $("vehicleFormPanel").classList.remove("hidden");
+  window.scrollTo({top:$("vehicleFormPanel").offsetTop-60,behavior:"smooth"});
+}
+
+function closeForm() {
+  $("vehicleFormPanel").classList.add("hidden");
+}
+
+function editVehicle(id) {
+  const v = vehicles.find(x=>String(x.id)===String(id));
+  if (!v) return;
+
+  $("vehicleId").value = v.id;
+  $("registration").value = v.registration || "";
+  $("brand").value = v.brand || "";
+  $("model").value = v.model || "";
+  $("type").value = v.type || "";
+  $("year").value = v.year || "";
+  $("mileage").value = v.mileage ?? 0;
+  $("fuel").value = v.fuel || "";
+  $("status").value = v.status || "Disponible";
+  $("assignment").value = v.assignment || "";
+  $("formTitle").textContent = "Modifier le véhicule";
+  $("vehicleFormPanel").classList.remove("hidden");
+  window.scrollTo({top:$("vehicleFormPanel").offsetTop-60,behavior:"smooth"});
+}
+
+async function saveVehicle(event) {
+  event.preventDefault();
+
+  const id = $("vehicleId").value;
+  const vehicle = {
+    registration:$("registration").value.trim(),
+    brand:$("brand").value.trim(),
+    model:$("model").value.trim(),
+    type:$("type").value.trim(),
+    year:Number($("year").value),
+    mileage:Number($("mileage").value),
+    fuel:$("fuel").value,
+    status:$("status").value,
+    assignment:$("assignment").value.trim()
+  };
+
+  try {
+    if (id) {
+      await api("/api/fleet/vehicles/"+encodeURIComponent(id),{
+        method:"PUT",body:JSON.stringify(vehicle)
+      });
+      showMessage("appMessage","Véhicule modifié avec succès.");
+    } else {
+      await api("/api/fleet/vehicles/",{
+        method:"POST",body:JSON.stringify(vehicle)
+      });
+      showMessage("appMessage","Véhicule ajouté avec succès.");
+    }
+    closeForm();
+    await loadVehicles();
+  } catch(e) {
+    showMessage("appMessage",e.message,true);
+  }
+}
+
+async function deleteVehicle(id) {
+  const v = vehicles.find(x=>String(x.id)===String(id));
+  if (!v || !confirm("Supprimer le véhicule "+v.registration+" ?")) return;
+
+  try {
+    await api("/api/fleet/vehicles/"+encodeURIComponent(id),{method:"DELETE"});
+    showMessage("appMessage","Véhicule supprimé.");
+    await loadVehicles();
+  } catch(e) {
+    showMessage("appMessage",e.message,true);
+  }
+}
+
+function exportJSON() {
+  const content = {
+    vehicles,
+    exportedAt:new Date().toISOString(),
+    application:"KEMS FLEET"
+  };
+  const blob = new Blob([JSON.stringify(content,null,2)],{type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "kems-fleet-sauvegarde.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    const parsed = JSON.parse(await file.text());
+    const incoming = Array.isArray(parsed) ? parsed : parsed.vehicles;
+    if (!Array.isArray(incoming)) throw new Error("Le fichier doit contenir un tableau de véhicules ou une propriété vehicles.");
+
+    const valid = incoming.filter(v =>
+      v && v.registration && v.brand && v.model && v.type &&
+      Number.isInteger(Number(v.year)) && Number(v.mileage)>=0 &&
+      v.fuel && v.status && v.assignment
+    );
+    if (valid.length !== incoming.length) {
+      throw new Error("Certains véhicules n'ont pas tous les champs obligatoires. Importation annulée.");
+    }
+
+    const mode = confirm(
+      "OK : ajouter les véhicules au parc actuel.\nANNULER : remplacer tout le parc (réservé à l'administrateur)."
+    );
+
+    if (!mode) {
+      if (currentRole.toLowerCase() !== "administrateur") {
+        throw new Error("Le remplacement est réservé au rôle Administrateur. Aucun véhicule n'a été supprimé.");
+      }
+      if (!confirm("ATTENTION : cette opération va supprimer les véhicules actuels avant l'importation. Continuer ?")) return;
+
+      for (const v of vehicles) {
+        await api("/api/fleet/vehicles/"+encodeURIComponent(v.id),{method:"DELETE"});
+      }
+    }
+
+    let added = 0;
+    for (const v of valid) {
+      const clean = {
+        registration:String(v.registration),
+        brand:String(v.brand),
+        model:String(v.model),
+        type:String(v.type),
+        year:Number(v.year),
+        mileage:Number(v.mileage),
+        fuel:String(v.fuel),
+        status:String(v.status),
+        assignment:String(v.assignment)
+      };
+      await api("/api/fleet/vehicles/",{method:"POST",body:JSON.stringify(clean)});
+      added++;
+    }
+
+    showMessage("appMessage",added+" véhicule(s) importé(s).");
+    await loadVehicles();
+  } catch(e) {
+    showMessage("appMessage","Importation interrompue : "+e.message,true);
+    await loadVehicles();
+  } finally {
+    event.target.value = "";
+  }
+}
+
+function importLogo(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    showMessage("appMessage","Choisissez une image PNG, JPG ou WEBP.",true);
+    return;
+  }
+  if (file.size > 5*1024*1024) {
+    showMessage("appMessage","Le logo ne doit pas dépasser 5 Mo.",true);
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    localStorage.setItem("kems_fleet_logo",reader.result);
+    setLogo(reader.result);
+    showMessage("appMessage","Logo enregistré sur cet appareil.");
+  };
+  reader.onerror = () => showMessage("appMessage","Impossible de lire le logo.",true);
+  reader.readAsDataURL(file);
+  event.target.value = "";
+}
+
+function removeLogo() {
+  localStorage.removeItem("kems_fleet_logo");
+  location.reload();
+}
+
+if (token) {
+  showApp();
+  loadVehicles();
+}
+</script>
+</body>
+</html>
+
