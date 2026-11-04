@@ -1,4 +1,5 @@
 package com.kems.fleet;
+
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -6,6 +7,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
@@ -22,6 +25,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -32,13 +37,20 @@ import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
 
+    // ==================================================
+    // CONFIGURATION
+    // ==================================================
+
     private final String GREEN = "#65E6A5";
     private final String BG = "#0C1714";
     private final String PANEL = "#14251F";
     private final String WHITE = "#F2FFF8";
 
     private static final int REQUEST_IMPORT_JSON = 501;
+    private static final int REQUEST_IMPORT_LOGO = 502;
+
     private static final int MAX_JSON_SIZE = 20 * 1024 * 1024;
+    private static final int MAX_LOGO_SIZE = 5 * 1024 * 1024;
 
     private SharedPreferences prefs;
 
@@ -49,33 +61,58 @@ public class MainActivity extends Activity {
 
     private LinearLayout root;
     private LinearLayout content;
+
     private TextView message;
+    private TextView jsonFileLabel;
+    private ImageView logoView;
 
     private JSONArray vehicles = new JSONArray();
 
     private Uri selectedJsonUri = null;
     private String selectedJsonName = "Aucun fichier sélectionné";
-    private TextView jsonFileLabel;
 
     private final ExecutorService executor =
             Executors.newFixedThreadPool(12);
 
+    // ==================================================
+    // DÉMARRAGE
+    // ==================================================
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+
         super.onCreate(savedInstanceState);
 
-        prefs = getSharedPreferences("kems_fleet", MODE_PRIVATE);
+        try {
 
-        serverUrl = prefs.getString("server", "");
-        token = prefs.getString("token", "");
-        username = prefs.getString("username", "");
-        role = prefs.getString("role", "");
+            prefs = getSharedPreferences(
+                    "kems_fleet",
+                    MODE_PRIVATE
+            );
 
-        if (!token.isEmpty()) {
-            showDashboard();
-            loadVehicles();
-        } else {
+            serverUrl = prefs.getString("server", "");
+            token = prefs.getString("token", "");
+            username = prefs.getString("username", "");
+            role = prefs.getString("role", "");
+
+            if (!token.isEmpty()) {
+
+                showDashboard();
+                loadVehicles();
+
+            } else {
+
+                showLogin();
+            }
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
+            token = "";
+
             showLogin();
+            showMessage("Erreur de démarrage : " + e.getMessage());
         }
     }
 
@@ -88,14 +125,29 @@ public class MainActivity extends Activity {
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor(BG));
-        root.setPadding(18, 18, 18, 18);
+        root.setPadding(18, 10, 18, 10);
+
+        logoView = new ImageView(this);
+        logoView.setAdjustViewBounds(true);
+        logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+
+        LinearLayout.LayoutParams logoParams =
+                new LinearLayout.LayoutParams(180, 90);
+
+        logoParams.gravity = Gravity.CENTER;
+        logoParams.setMargins(0, 5, 0, 5);
+
+        root.addView(logoView, logoParams);
+
+        loadSavedLogo();
 
         TextView heading = new TextView(this);
+
         heading.setText("KEMS FLEET\n" + title);
         heading.setTextColor(Color.parseColor(GREEN));
-        heading.setTextSize(23);
+        heading.setTextSize(21);
         heading.setGravity(Gravity.CENTER);
-        heading.setPadding(5, 15, 5, 20);
+        heading.setPadding(5, 8, 5, 15);
         heading.setTypeface(null, 1);
 
         root.addView(heading);
@@ -108,11 +160,13 @@ public class MainActivity extends Activity {
 
         scroll.addView(content);
 
-        root.addView(scroll, new LinearLayout.LayoutParams(
-                -1, 0, 1
-        ));
+        root.addView(
+                scroll,
+                new LinearLayout.LayoutParams(-1, 0, 1)
+        );
 
         message = new TextView(this);
+
         message.setTextColor(Color.parseColor(GREEN));
         message.setTextSize(13);
         message.setGravity(Gravity.CENTER);
@@ -126,6 +180,7 @@ public class MainActivity extends Activity {
     private TextView text(String value, int size) {
 
         TextView t = new TextView(this);
+
         t.setText(value);
         t.setTextColor(Color.parseColor(WHITE));
         t.setTextSize(size);
@@ -149,6 +204,7 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(-1, -2);
 
         p.setMargins(0, 6, 0, 6);
+
         e.setLayoutParams(p);
 
         return e;
@@ -169,9 +225,19 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(-1, -2);
 
         p.setMargins(0, 5, 0, 5);
+
         b.setLayoutParams(p);
 
-        b.setOnClickListener(v -> action.run());
+        b.setOnClickListener(v -> {
+
+            try {
+                action.run();
+
+            } catch (Exception e) {
+
+                showMessage("Erreur : " + e.getMessage());
+            }
+        });
 
         return b;
     }
@@ -207,6 +273,231 @@ public class MainActivity extends Activity {
     }
 
     // ==================================================
+    // LOGO DE L'APPLICATION
+    // ==================================================
+
+    private File getLogoFile() {
+
+        return new File(
+                getFilesDir(),
+                "kems_fleet_logo.png"
+        );
+    }
+
+    private void loadSavedLogo() {
+
+        if (logoView == null) {
+            return;
+        }
+
+        File file = getLogoFile();
+
+        if (!file.exists()) {
+            logoView.setImageDrawable(null);
+            return;
+        }
+
+        try {
+
+            BitmapFactory.Options options =
+                    new BitmapFactory.Options();
+
+            options.inJustDecodeBounds = true;
+
+            BitmapFactory.decodeFile(
+                    file.getAbsolutePath(),
+                    options
+            );
+
+            int sampleSize = 1;
+
+            while (options.outWidth / sampleSize > 1000 ||
+                    options.outHeight / sampleSize > 1000) {
+
+                sampleSize *= 2;
+            }
+
+            options.inJustDecodeBounds = false;
+            options.inSampleSize = sampleSize;
+
+            Bitmap bitmap = BitmapFactory.decodeFile(
+                    file.getAbsolutePath(),
+                    options
+            );
+
+            if (bitmap != null) {
+                logoView.setImageBitmap(bitmap);
+            }
+
+        } catch (Exception e) {
+
+            showMessage("Impossible de charger le logo.");
+        }
+    }
+
+    private void chooseLogo() {
+
+        Intent intent = new Intent(
+                Intent.ACTION_OPEN_DOCUMENT
+        );
+
+        intent.addCategory(
+                Intent.CATEGORY_OPENABLE
+        );
+
+        intent.setType("image/*");
+
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+        );
+
+        try {
+
+            startActivityForResult(
+                    intent,
+                    REQUEST_IMPORT_LOGO
+            );
+
+        } catch (Exception e) {
+
+            showMessage(
+                    "Impossible d'ouvrir les fichiers du téléphone."
+            );
+        }
+    }
+
+    private void saveLogo(Uri uri) {
+
+        if (uri == null) {
+            return;
+        }
+
+        showMessage("Enregistrement du logo...");
+
+        executor.execute(() -> {
+
+            File destination = getLogoFile();
+
+            File temporary = new File(
+                    getFilesDir(),
+                    "kems_fleet_logo.tmp"
+            );
+
+            try {
+
+                InputStream input =
+                        getContentResolver().openInputStream(uri);
+
+                if (input == null) {
+
+                    throw new Exception(
+                            "Impossible de lire l'image."
+                    );
+                }
+
+                int total = 0;
+
+                try (
+                        InputStream in = input;
+                        OutputStream out =
+                                new FileOutputStream(temporary)
+                ) {
+
+                    byte[] buffer = new byte[8192];
+
+                    int count;
+
+                    while ((count = in.read(buffer)) != -1) {
+
+                        total += count;
+
+                        if (total > MAX_LOGO_SIZE) {
+
+                            throw new Exception(
+                                    "Logo trop volumineux. Maximum 5 Mo."
+                            );
+                        }
+
+                        out.write(buffer, 0, count);
+                    }
+                }
+
+                if (total == 0) {
+
+                    throw new Exception("Image vide.");
+                }
+
+                if (!temporary.renameTo(destination)) {
+
+                    try (
+                            InputStream in =
+                                    new java.io.FileInputStream(temporary);
+                            OutputStream out =
+                                    new FileOutputStream(destination)
+                    ) {
+
+                        byte[] buffer = new byte[8192];
+
+                        int count;
+
+                        while ((count = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, count);
+                        }
+                    }
+
+                    temporary.delete();
+                }
+
+                runOnUiThread(() -> {
+
+                    loadSavedLogo();
+
+                    showMessage("Logo enregistré avec succès.");
+
+                    notifyUser("Logo KEMS FLEET enregistré.");
+
+                });
+
+            } catch (Exception e) {
+
+                temporary.delete();
+
+                showMessage(
+                        "Erreur logo : " + e.getMessage()
+                );
+            }
+        });
+    }
+
+    private void deleteLogo() {
+
+        new AlertDialog.Builder(this)
+                .setTitle("Supprimer le logo")
+                .setMessage(
+                        "Voulez-vous supprimer le logo de l'application ?"
+                )
+                .setNegativeButton("ANNULER", null)
+                .setPositiveButton(
+                        "SUPPRIMER",
+                        (dialog, which) -> {
+
+                            File file = getLogoFile();
+
+                            if (file.exists()) {
+                                file.delete();
+                            }
+
+                            if (logoView != null) {
+                                logoView.setImageDrawable(null);
+                            }
+
+                            showMessage("Logo supprimé.");
+                        }
+                )
+                .show();
+    }
+
+    // ==================================================
     // ADRESSE SERVEUR
     // ==================================================
 
@@ -232,12 +523,13 @@ public class MainActivity extends Activity {
 
             if (url.getPort() == -1) {
 
-                String host = url.getHost();
-
-                String protocol = url.getProtocol();
-
-                address = protocol + "://" + host + ":3001";
+                address = url.getProtocol() +
+                        "://" +
+                        url.getHost() +
+                        ":3001";
             }
+
+            return address;
 
         } catch (Exception e) {
 
@@ -245,8 +537,6 @@ public class MainActivity extends Activity {
                     "Adresse serveur invalide."
             );
         }
-
-        return address;
     }
 
     // ==================================================
@@ -269,7 +559,7 @@ public class MainActivity extends Activity {
 
         password.setInputType(
                 InputType.TYPE_CLASS_TEXT |
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
+                        InputType.TYPE_TEXT_VARIATION_PASSWORD
         );
 
         content.addView(text("Adresse du serveur", 14));
@@ -303,33 +593,38 @@ public class MainActivity extends Activity {
         content.addView(user);
         content.addView(password);
 
-        content.addView(button("SE CONNECTER", () -> {
+        content.addView(button(
+                "SE CONNECTER",
+                () -> {
 
-            try {
+                    try {
 
-                serverUrl = normalizeServerUrl(
-                        server.getText().toString()
-                );
+                        serverUrl = normalizeServerUrl(
+                                server.getText().toString()
+                        );
 
-                String u = user.getText().toString().trim();
-                String p = password.getText().toString();
+                        String u = user.getText().toString().trim();
+                        String p = password.getText().toString();
 
-                if (serverUrl.isEmpty() ||
-                        u.isEmpty() ||
-                        p.isEmpty()) {
+                        if (serverUrl.isEmpty() ||
+                                u.isEmpty() ||
+                                p.isEmpty()) {
 
-                    showMessage("Veuillez remplir tous les champs.");
-                    return;
+                            showMessage(
+                                    "Veuillez remplir tous les champs."
+                            );
+
+                            return;
+                        }
+
+                        login(u, p);
+
+                    } catch (Exception e) {
+
+                        showMessage(e.getMessage());
+                    }
                 }
-
-                login(u, p);
-
-            } catch (Exception e) {
-
-                showMessage(e.getMessage());
-            }
-
-        }));
+        ));
 
         content.addView(button(
                 "PARAMÈTRES SERVEUR",
@@ -404,7 +699,6 @@ public class MainActivity extends Activity {
 
                 showMessage("Erreur : " + e.getMessage());
             }
-
         });
     }
 
@@ -421,86 +715,113 @@ public class MainActivity extends Activity {
 
         String base = serverUrl.trim().replaceAll("/+$", "");
 
-        URL url = new URL(base + path);
-
-        HttpURLConnection connection =
-                (HttpURLConnection) url.openConnection();
-
-        connection.setRequestMethod(method);
-        connection.setConnectTimeout(7000);
-        connection.setReadTimeout(15000);
-
-        connection.setRequestProperty(
-                "Accept",
-                "application/json"
-        );
-
-        if (authenticated && !token.isEmpty()) {
-
-            connection.setRequestProperty(
-                    "Authorization",
-                    "Bearer " + token
-            );
+        if (base.isEmpty()) {
+            throw new Exception("Adresse serveur non configurée.");
         }
 
-        if (body != null) {
+        HttpURLConnection connection = null;
 
-            connection.setDoOutput(true);
+        try {
+
+            URL url = new URL(base + path);
+
+            connection = (HttpURLConnection) url.openConnection();
+
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(20000);
 
             connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json; charset=UTF-8"
+                    "Accept",
+                    "application/json"
             );
 
-            try (OutputStream os = connection.getOutputStream()) {
+            if (authenticated && !token.isEmpty()) {
 
-                os.write(
-                        body.toString().getBytes(StandardCharsets.UTF_8)
+                connection.setRequestProperty(
+                        "Authorization",
+                        "Bearer " + token
                 );
             }
-        }
 
-        int status = connection.getResponseCode();
+            if (body != null) {
 
-        InputStream stream = status >= 200 && status < 400
-                ? connection.getInputStream()
-                : connection.getErrorStream();
+                connection.setDoOutput(true);
 
-        StringBuilder response = new StringBuilder();
+                connection.setRequestProperty(
+                        "Content-Type",
+                        "application/json; charset=UTF-8"
+                );
 
-        if (stream != null) {
+                try (OutputStream os = connection.getOutputStream()) {
 
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(
-                            stream,
-                            StandardCharsets.UTF_8
-                    ))) {
-
-                String line;
-
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
+                    os.write(
+                            body.toString().getBytes(StandardCharsets.UTF_8)
+                    );
                 }
             }
+
+            int status = connection.getResponseCode();
+
+            InputStream stream = status >= 200 && status < 400
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+
+            StringBuilder response = new StringBuilder();
+
+            if (stream != null) {
+
+                try (
+                        InputStream in = stream;
+                        BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(
+                                        in,
+                                        StandardCharsets.UTF_8
+                                )
+                        )
+                ) {
+
+                    String line;
+
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
+                }
+            }
+
+            JSONObject result;
+
+            try {
+
+                result = response.length() == 0
+                        ? new JSONObject()
+                        : new JSONObject(response.toString());
+
+            } catch (Exception e) {
+
+                throw new Exception(
+                        "Réponse serveur invalide (HTTP " + status + ")."
+                );
+            }
+
+            if (status < 200 || status >= 300) {
+
+                throw new Exception(
+                        result.optString(
+                                "message",
+                                "Erreur HTTP " + status
+                        )
+                );
+            }
+
+            return result;
+
+        } finally {
+
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
-
-        connection.disconnect();
-
-        JSONObject result = response.length() == 0
-                ? new JSONObject()
-                : new JSONObject(response.toString());
-
-        if (status < 200 || status >= 300) {
-
-            throw new Exception(
-                    result.optString(
-                            "message",
-                            "Erreur HTTP " + status
-                    )
-            );
-        }
-
-        return result;
     }
 
     // ==================================================
@@ -534,10 +855,10 @@ public class MainActivity extends Activity {
 
                 showMessage(
                         "SERVEUR ACCESSIBLE\n" +
-                        "Application : " +
-                        result.optString("application", "KEMS") +
-                        "\nVersion : " +
-                        result.optString("version", "?")
+                                "Application : " +
+                                result.optString("application", "KEMS") +
+                                "\nVersion : " +
+                                result.optString("version", "?")
                 );
 
             } catch (Exception e) {
@@ -546,7 +867,6 @@ public class MainActivity extends Activity {
                         "SERVEUR INACCESSIBLE : " + e.getMessage()
                 );
             }
-
         });
     }
 
@@ -597,8 +917,8 @@ public class MainActivity extends Activity {
 
                 String subnet =
                         parts[0] + "." +
-                        parts[1] + "." +
-                        parts[2] + ".";
+                                parts[1] + "." +
+                                parts[2] + ".";
 
                 CompletionService<String> completion =
                         new ExecutorCompletionService<>(scanPool);
@@ -613,6 +933,8 @@ public class MainActivity extends Activity {
 
                     completion.submit(() -> {
 
+                        HttpURLConnection c = null;
+
                         try {
 
                             String candidate =
@@ -622,23 +944,24 @@ public class MainActivity extends Activity {
                                     candidate + "/api/health"
                             );
 
-                            HttpURLConnection c =
-                                    (HttpURLConnection)
-                                            url.openConnection();
+                            c = (HttpURLConnection)
+                                    url.openConnection();
 
-                            c.setConnectTimeout(700);
-                            c.setReadTimeout(700);
+                            c.setConnectTimeout(900);
+                            c.setReadTimeout(900);
                             c.setRequestMethod("GET");
 
-                            int code = c.getResponseCode();
-
-                            c.disconnect();
-
-                            if (code == 200) {
+                            if (c.getResponseCode() == 200) {
                                 return candidate;
                             }
 
                         } catch (Exception ignored) {
+
+                        } finally {
+
+                            if (c != null) {
+                                c.disconnect();
+                            }
                         }
 
                         return null;
@@ -701,34 +1024,27 @@ public class MainActivity extends Activity {
 
                 scanPool.shutdownNow();
             }
-
         });
     }
 
     // ==================================================
-    // PARAMÈTRES SERVEUR ET JSON
+    // PARAMÈTRES
     // ==================================================
 
     private void showSettings() {
 
-        createScreen("PARAMÈTRES SERVEUR");
+        createScreen("PARAMÈTRES");
 
         content.addView(text(
                 "1. CONNEXION AU SERVEUR",
                 18
         ));
 
-        EditText server = field(
-                "192.168.1.10:3001"
-        );
+        EditText server = field("192.168.1.10:3001");
 
         server.setText(serverUrl);
 
-        content.addView(text(
-                "Adresse IP du serveur",
-                14
-        ));
-
+        content.addView(text("Adresse IP du serveur", 14));
         content.addView(server);
 
         content.addView(button(
@@ -737,7 +1053,7 @@ public class MainActivity extends Activity {
         ));
 
         content.addView(button(
-                "ENREGISTRER L'ADRESSE MANUELLE",
+                "ENREGISTRER L'ADRESSE",
                 () -> {
 
                     try {
@@ -791,14 +1107,11 @@ public class MainActivity extends Activity {
 
         content.addView(text(
                 "Sélectionnez un fichier JSON contenant " +
-                "les informations des véhicules.",
+                        "les informations des véhicules.",
                 13
         ));
 
-        jsonFileLabel = text(
-                selectedJsonName,
-                14
-        );
+        jsonFileLabel = text(selectedJsonName, 14);
 
         jsonFileLabel.setBackgroundColor(
                 Color.parseColor(PANEL)
@@ -819,7 +1132,30 @@ public class MainActivity extends Activity {
         addSpace();
 
         content.addView(text(
-                "3. SESSION",
+                "3. LOGO DE L'APPLICATION",
+                18
+        ));
+
+        content.addView(text(
+                "Importer le logo de votre entreprise. " +
+                        "Il sera conservé sur ce téléphone.",
+                13
+        ));
+
+        content.addView(button(
+                "IMPORTER UN LOGO",
+                this::chooseLogo
+        ));
+
+        content.addView(button(
+                "SUPPRIMER LE LOGO",
+                this::deleteLogo
+        ));
+
+        addSpace();
+
+        content.addView(text(
+                "4. SESSION",
                 18
         ));
 
@@ -841,7 +1177,7 @@ public class MainActivity extends Activity {
     }
 
     // ==================================================
-    // CHOISIR UN FICHIER JSON
+    // SÉLECTION FICHIER JSON
     // ==================================================
 
     private void chooseJsonFile() {
@@ -888,6 +1224,18 @@ public class MainActivity extends Activity {
                 data
         );
 
+        if (requestCode == REQUEST_IMPORT_LOGO) {
+
+            if (resultCode == RESULT_OK &&
+                    data != null &&
+                    data.getData() != null) {
+
+                saveLogo(data.getData());
+            }
+
+            return;
+        }
+
         if (requestCode != REQUEST_IMPORT_JSON) return;
 
         if (resultCode != RESULT_OK ||
@@ -921,24 +1269,21 @@ public class MainActivity extends Activity {
             );
         }
 
-        showMessage(
-                "Fichier sélectionné : " + fileName
-        );
+        showMessage("Fichier sélectionné : " + fileName);
 
-        notifyUser(
-                "Fichier JSON sélectionné : " + fileName
-        );
+        notifyUser("Fichier JSON sélectionné : " + fileName);
     }
 
     private String getFileName(Uri uri) {
 
         String result = "fichier.json";
 
-        try (Cursor cursor = getContentResolver()
-                .query(uri, null, null, null, null)) {
+        try (
+                Cursor cursor = getContentResolver()
+                        .query(uri, null, null, null, null)
+        ) {
 
-            if (cursor != null &&
-                    cursor.moveToFirst()) {
+            if (cursor != null && cursor.moveToFirst()) {
 
                 int index = cursor.getColumnIndex(
                         OpenableColumns.DISPLAY_NAME
@@ -946,7 +1291,11 @@ public class MainActivity extends Activity {
 
                 if (index >= 0) {
 
-                    result = cursor.getString(index);
+                    String name = cursor.getString(index);
+
+                    if (name != null && !name.isEmpty()) {
+                        result = name;
+                    }
                 }
             }
 
@@ -957,7 +1306,7 @@ public class MainActivity extends Activity {
     }
 
     // ==================================================
-    // LIRE ET VALIDER JSON
+    // LECTURE JSON
     // ==================================================
 
     private JSONArray readJsonVehicles(Uri uri) throws Exception {
@@ -965,8 +1314,10 @@ public class MainActivity extends Activity {
         ByteArrayOutputStream output =
                 new ByteArrayOutputStream();
 
-        try (InputStream input =
-                     getContentResolver().openInputStream(uri)) {
+        try (
+                InputStream input =
+                        getContentResolver().openInputStream(uri)
+        ) {
 
             if (input == null) {
 
@@ -998,16 +1349,13 @@ public class MainActivity extends Activity {
         String json = new String(
                 output.toByteArray(),
                 StandardCharsets.UTF_8
-        );
-
-        json = json.trim();
+        ).trim();
 
         if (json.startsWith("\uFEFF")) {
             json = json.substring(1);
         }
 
         if (json.startsWith("[")) {
-
             return new JSONArray(json);
         }
 
@@ -1024,6 +1372,10 @@ public class MainActivity extends Activity {
 
         return array;
     }
+
+    // ==================================================
+    // OPTIONS IMPORT JSON
+    // ==================================================
 
     private void showImportOptions() {
 
@@ -1068,9 +1420,8 @@ public class MainActivity extends Activity {
                                 .setTitle("Attention")
                                 .setMessage(
                                         "Cette opération remplace toute " +
-                                        "la base de véhicules du serveur. " +
-                                        "Une sauvegarde serveur doit être " +
-                                        "effectuée avant le remplacement."
+                                                "la base de véhicules du serveur. " +
+                                                "Vérifiez la sauvegarde avant de continuer."
                                 )
                                 .setNegativeButton("ANNULER", null)
                                 .setPositiveButton(
@@ -1092,16 +1443,15 @@ public class MainActivity extends Activity {
             return;
         }
 
-        showMessage(
-                "Lecture du fichier " + selectedJsonName + "..."
-        );
+        Uri uri = selectedJsonUri;
+
+        showMessage("Lecture du fichier " + selectedJsonName + "...");
 
         executor.execute(() -> {
 
             try {
 
-                JSONArray imported =
-                        readJsonVehicles(selectedJsonUri);
+                JSONArray imported = readJsonVehicles(uri);
 
                 if (imported.length() == 0) {
 
@@ -1124,7 +1474,7 @@ public class MainActivity extends Activity {
 
                 showMessage(
                         "Envoi de " + imported.length() +
-                        " véhicule(s) au serveur..."
+                                " véhicule(s) au serveur..."
                 );
 
                 JSONObject result = request(
@@ -1140,21 +1490,18 @@ public class MainActivity extends Activity {
                 int skippedCount =
                         result.optInt("skipped", 0);
 
-                String successMessage =
+                showMessage(
                         result.optString(
                                 "message",
                                 "Importation terminée."
-                        );
-
-                showMessage(
-                        successMessage +
-                        "\nImportés : " + importedCount +
-                        "\nIgnorés : " + skippedCount
+                        ) +
+                                "\nImportés : " + importedCount +
+                                "\nIgnorés : " + skippedCount
                 );
 
                 notifyUser(
                         "Importation terminée : " +
-                        importedCount + " véhicule(s)."
+                                importedCount + " véhicule(s)."
                 );
 
                 runOnUiThread(() -> {
@@ -1174,7 +1521,6 @@ public class MainActivity extends Activity {
                         "Importation impossible : " + e.getMessage()
                 );
             }
-
         });
     }
 
@@ -1188,8 +1534,8 @@ public class MainActivity extends Activity {
 
         content.addView(text(
                 "Utilisateur : " + username +
-                "\nProfil : " + role +
-                "\nServeur : " + serverUrl,
+                        "\nProfil : " + role +
+                        "\nServeur : " + serverUrl,
                 13
         ));
 
@@ -1212,7 +1558,7 @@ public class MainActivity extends Activity {
         }
 
         content.addView(button(
-                "PARAMÈTRES SERVEUR",
+                "PARAMÈTRES",
                 this::showSettings
         ));
 
@@ -1289,18 +1635,19 @@ public class MainActivity extends Activity {
 
         for (int i = 0; i < vehicles.length(); i++) {
 
-            JSONObject vehicle =
-                    vehicles.optJSONObject(i);
+            JSONObject vehicle = vehicles.optJSONObject(i);
 
             if (vehicle == null) continue;
 
             String id = vehicle.optString("id", "");
+
             String registration =
                     vehicle.optString("registration", "");
 
             String brand = vehicle.optString("brand", "");
             String model = vehicle.optString("model", "");
             String status = vehicle.optString("status", "");
+
             String assignment =
                     vehicle.optString("assignment", "");
 
@@ -1320,6 +1667,7 @@ public class MainActivity extends Activity {
                     new LinearLayout.LayoutParams(-1, -2);
 
             cp.setMargins(0, 5, 0, 5);
+
             card.setLayoutParams(cp);
 
             card.addView(text(
@@ -1329,8 +1677,8 @@ public class MainActivity extends Activity {
 
             card.addView(text(
                     "Statut : " + status +
-                    "\nAffectation : " + assignment +
-                    "\nKilométrage : " + mileage + " km",
+                            "\nAffectation : " + assignment +
+                            "\nKilométrage : " + mileage + " km",
                     13
             ));
 
@@ -1355,7 +1703,7 @@ public class MainActivity extends Activity {
     }
 
     // ==================================================
-    // CHARGEMENT DES VÉHICULES
+    // CHARGEMENT VÉHICULES
     // ==================================================
 
     private void loadVehicles() {
@@ -1393,7 +1741,7 @@ public class MainActivity extends Activity {
 
                     showMessage(
                             vehicles.length() +
-                            " véhicule(s) chargé(s)."
+                                    " véhicule(s) chargé(s)."
                     );
                 });
 
@@ -1403,7 +1751,6 @@ public class MainActivity extends Activity {
                         "Erreur chargement : " + e.getMessage()
                 );
             }
-
         });
     }
 
@@ -1431,7 +1778,10 @@ public class MainActivity extends Activity {
         EditText assignment = field("Affectation");
 
         year.setInputType(InputType.TYPE_CLASS_NUMBER);
-        mileage.setInputType(InputType.TYPE_CLASS_NUMBER);
+        mileage.setInputType(
+                InputType.TYPE_CLASS_NUMBER |
+                        InputType.TYPE_NUMBER_FLAG_DECIMAL
+        );
 
         form.addView(registration);
         form.addView(brand);
@@ -1484,44 +1834,50 @@ public class MainActivity extends Activity {
 
                             try {
 
-                                JSONObject data =
-                                        new JSONObject();
+                                if (registration.getText().toString().trim().isEmpty() ||
+                                        brand.getText().toString().trim().isEmpty() ||
+                                        model.getText().toString().trim().isEmpty() ||
+                                        year.getText().toString().trim().isEmpty() ||
+                                        mileage.getText().toString().trim().isEmpty()) {
+
+                                    throw new Exception(
+                                            "Remplissez les champs obligatoires."
+                                    );
+                                }
+
+                                JSONObject data = new JSONObject();
 
                                 data.put(
                                         "registration",
-                                        registration.getText()
-                                                .toString().trim()
+                                        registration.getText().toString().trim()
                                 );
 
                                 data.put(
                                         "brand",
-                                        brand.getText()
-                                                .toString().trim()
+                                        brand.getText().toString().trim()
                                 );
 
                                 data.put(
                                         "model",
-                                        model.getText()
-                                                .toString().trim()
+                                        model.getText().toString().trim()
                                 );
 
                                 data.put(
                                         "type",
-                                        type.getText()
-                                                .toString().trim()
+                                        type.getText().toString().trim()
                                 );
 
                                 data.put(
                                         "year",
                                         Integer.parseInt(
-                                                year.getText().toString()
+                                                year.getText().toString().trim()
                                         )
                                 );
 
                                 data.put(
                                         "mileage",
                                         Double.parseDouble(
-                                                mileage.getText().toString()
+                                                mileage.getText().toString().trim()
                                         )
                                 );
 
@@ -1537,8 +1893,7 @@ public class MainActivity extends Activity {
 
                                 data.put(
                                         "assignment",
-                                        assignment.getText()
-                                                .toString().trim()
+                                        assignment.getText().toString().trim()
                                 );
 
                                 saveVehicle(
@@ -1551,7 +1906,7 @@ public class MainActivity extends Activity {
                             } catch (Exception e) {
 
                                 showMessage(
-                                        "Vérifiez les champs obligatoires."
+                                        "Erreur : " + e.getMessage()
                                 );
                             }
                         }
@@ -1595,7 +1950,6 @@ public class MainActivity extends Activity {
                         "Erreur : " + e.getMessage()
                 );
             }
-
         });
     }
 
@@ -1612,7 +1966,7 @@ public class MainActivity extends Activity {
                 .setTitle("Suppression")
                 .setMessage(
                         "Supprimer le véhicule " +
-                        registration + " ?"
+                                registration + " ?"
                 )
                 .setNegativeButton("ANNULER", null)
                 .setPositiveButton(
@@ -1652,7 +2006,6 @@ public class MainActivity extends Activity {
                         "Erreur suppression : " + e.getMessage()
                 );
             }
-
         });
     }
 
@@ -1699,6 +2052,8 @@ public class MainActivity extends Activity {
 
         super.onDestroy();
 
-        executor.shutdownNow();
+        // Ne pas arrêter l'executor ici :
+        // une recréation de l'activité ne doit pas
+        // interrompre brutalement les opérations réseau.
     }
 }
